@@ -1,0 +1,156 @@
+### bits.py
+==============================================================================
+1) How many states remain reachable once 2:4 sparsity is enforced
+==============================================================================
+  all ternary blocks of 4:                3^4 = 81
+    with 0 non-zeros:                      1  (C(4,0)*2^0)
+    with 1 non-zeros:                      8  (C(4,1)*2^1)
+    with 2 non-zeros:                     24  (C(4,2)*2^2)
+  valid X-Ternary blocks (<=2 non-zero):  33
+  entropy under a uniform distribution:   log2(33)/4 = 1.2611 bit/weight
+
+==============================================================================
+2) Information content versus what is actually stored
+==============================================================================
+  scheme                                 needs   stores    waste   note
+  BitNet b1.58 (dense ternary)          1.585b   1.585b   +0.0%   5 weights per 8 bits
+  X-Ternary: information content        1.261b   2.000b  +58.6%   2 bit/weight per README
+  X-Ternary + FP8 scale per 32          1.261b   2.250b  +78.4%   paper section 2.2
+
+  X-Ternary carries 20.4% LESS information than BitNet
+  and stores it in 42.0% MORE bits (with the FP8 scale).
+  The paper's premise ('BitNet wastes space') is therefore inverted.
+
+==============================================================================
+3) The README's 'four states': how many are functionally distinct
+==============================================================================
+  01 -> +1 | 10 -> -1 | 00 -> 0 | 11 -> x
+  theory.md: 'state x is defined as a Structural Zero ... corresponds to High-Z'
+  In y = Wx: '00 -> ignore', '11 -> physically skip the operation'.
+  Both contribute zero to y, so a 4-symbol code carries 3 values.
+  Code capacity: 2 bits. Used: log2(3) = 1.5850 bits.
+  Wasted by construction: 0.4150 bit/weight = 20.8% of the 2-bit space.
+
+==============================================================================
+4) Empirical entropy of what the published code actually emits
+==============================================================================
+  gaussian weights     blocks used  33/33  entropy 1.0890 bit/weight  non-zero 47.5%
+                       -> stored at 2.0 bit/weight, waste +83.7%
+  laplacian weights    blocks used  33/33  entropy 1.1695 bit/weight  non-zero 45.2%
+                       -> stored at 2.0 bit/weight, waste +71.0%
+
+### roofline.py
+torch 2.5.1+cu121  |  NVIDIA GeForce RTX 3090  |  VRAM 23.6 GiB
+
+==============================================================================
+1) Measured read bandwidth
+==============================================================================
+  read 2.0 GiB per pass, best 882 GB/s
+  catalogue bandwidth 936 GB/s  =>  efficiency 94%
+
+==============================================================================
+2) Token-rate ceiling for a 70B model on one card
+==============================================================================
+  format                                       GiB  ceil @spec  ceil @measured
+  FP16                                       130.4       6.7/s           6.3/s
+  BitNet b1.58 (5 weights / 8 bits)           13.0      66.9/s          63.0/s
+  X-Ternary 2 bit/weight per README           16.3      53.5/s          50.4/s
+  X-Ternary + FP8 scale per 32 (sec. 2.2)     18.3      47.6/s          44.8/s
+  2:4 compressed: 2x2b value + 4b index       16.3      53.5/s          50.4/s
+  2:4 compressed, best case: 2x1b + 4b        12.2      71.3/s          67.2/s
+
+  The ceiling assumes 100% bus utilisation, an empty KV cache, no
+  activation traffic and no dequantization overhead. Real engines reach
+  60-80% of it.
+  The paper claims 60 tok/s. The format it specifies (2.25 bit/weight)
+  has a ceiling of 47.6/s.
+
+  Note: 2:4 compression saves no memory. Two surviving values at 2 bits
+  plus 4 bits of index is the same 8 bits per 4 weights as dense 2-bit.
+  The two ideas do not compose in the memory budget; 2:4 buys compute,
+  not bandwidth.
+
+### determinism.py
+==============================================================================
+1) Associativity of addition on the GPU
+==============================================================================
+  fp16: (a+b)+c != a+(b+c) for 31.92% of random triples
+  bf16: (a+b)+c != a+(b+c) for 31.88% of random triples
+  fp32: (a+b)+c != a+(b+c) for 31.86% of random triples
+  => non-associativity is already in the hardware. It is not a property
+     that can be added.
+
+==============================================================================
+2) Does a GEMM result depend on the reduction schedule (i.e. on batch)?
+==============================================================================
+  batch    2: bit-identical = True    max abs diff 0.000e+00  (0.00e+00 rel.)
+  batch    8: bit-identical = True    max abs diff 0.000e+00  (0.00e+00 rel.)
+  batch   64: bit-identical = False   max abs diff 1.000e+00  (4.69e-03 rel.)
+  batch  256: bit-identical = False   max abs diff 1.000e+00  (4.69e-03 rel.)
+  Same input vector, different batch size => different numbers.
+
+==============================================================================
+3) The same effect on a real model's logits
+==============================================================================
+  batch   2: bit-identical = False  max logit diff 0.2188  positions reordered in the top 10: 0
+  batch   8: bit-identical = False  max logit diff 0.2500  positions reordered in the top 10: 4
+  batch  32: bit-identical = False  max logit diff 0.1875  positions reordered in the top 10: 2
+  Same prompt, same model, same GPU: the logits depend on the batch size.
+  The cause is the reduction order inside the GEMM, not 'associative
+  probability'. Determinism is obtained by fixing the schedule, not by
+  adding more non-associativity.
+
+### kvcache.py
+model /home/kara/ai-tools/models/Qwen3-1.7B-Base  |  32 windows of 1024 tokens  |  vocabulary 151669
+
+  variant                                      bit/value        PPL  x baseline
+  fp16 baseline (no quantization)                  16.00      10.40        1.0x   [3s]
+  INT8 per-token                                    8.00      10.46        1.0x   [3s]
+  INT4 per-token                                    4.00    8859.03      851.9x   [3s]
+  INT4 in groups of 32                              4.13      27.35        2.6x   [3s]
+  INT4 K per-channel + V per-token (KIVI)           4.13      10.52        1.0x   [3s]
+  INT3 in groups of 32                              3.13     273.54       26.3x   [3s]
+  INT2 in groups of 32 (honest 2 bits)              2.13    7342.37      706.1x   [3s]
+  ternary in groups of 32                           1.71    7326.40      704.5x   [3s]
+  ternary per-token (BitNet, best case)             1.58    6287.38      604.6x   [3s]
+  ternary per-tensor (as in xt_quant.py)            1.58   13752.87     1322.6x   [3s]
+  X-Ternary verbatim from the repository            2.00   52003.53     5001.0x   [7s]
+  X-Ternary per-token + 2:4                         2.00   62128.76     5974.7x   [5s]
+  X-Ternary verbatim, gamma never applied           2.00  722019.26    69433.5x   [7s]
+  X-Ternary with the issue #1 fix                   2.00   11735.37     1128.5x   [6s]
+  ternary K only, V left in fp16                    1.58    1242.69      119.5x   [3s]
+  ternary V only, K left in fp16                    1.58    1711.57      164.6x   [3s]
+
+### attribution.py
+vocabulary 151669 tokens, random guessing = 17.21 bit/token = PPL 151669
+
+  variant                                             PPL  bit/token  model retained
+  fp16 baseline                                     10.40      3.38          100.0%
+  INT4 K per-channel + V per-token (KIVI)           10.52      3.40           99.9%
+  INT3 in groups of 32                             273.54      8.10           65.9%
+  ternary per-token (best case)                   6287.38     12.62           33.2%
+  X-Ternary verbatim from the repository         52003.53     15.67           11.2%
+  X-Ternary per-token + 2:4                      62128.76     15.92            9.3%
+  X-Ternary, gamma never applied                722019.26     19.46            0.0%
+
+  total loss 12.29 bit/token, of which
+    ternary rounding alone: 9.24 bit (75%)
+    the 2:4 mask on top:    3.05 bit (25%)
+
+  tensor / scale                 nz before  nz after  nz killed  energy killed  if chosen correctly
+  L00 K per-tensor (repo)         30.4%    26.6%      3.9%          0.3%                0.1%
+  L00 K per-token                 31.0%    26.7%      4.4%          0.3%                0.1%
+  L00 V per-tensor (repo)         59.8%    42.0%     17.8%         31.6%                9.3%
+  L00 V per-token                 65.6%    46.6%     19.0%         28.8%                9.3%
+  L14 K per-tensor (repo)         54.7%    40.7%     14.0%         16.0%                4.8%
+  L14 K per-token                 54.9%    40.9%     14.0%         15.9%                4.8%
+  L14 V per-tensor (repo)         65.4%    46.2%     19.2%         38.1%               10.5%
+  L14 V per-token                 67.4%    47.1%     20.3%         33.1%               10.5%
+  L27 K per-tensor (repo)         54.6%    41.8%     12.8%         26.9%                2.2%
+  L27 K per-token                 55.3%    42.4%     12.9%         25.7%                2.2%
+  L27 V per-tensor (repo)         66.3%    46.4%     20.0%         34.6%               12.4%
+  L27 V per-token                 68.5%    47.4%     21.1%         33.0%               12.4%
+
+  how often the mask zeroes each position of a block of 4: ['81%', '76%', '27%', '16%']
+  (a magnitude-based rule would show no positional preference)
+
