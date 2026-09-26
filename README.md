@@ -75,6 +75,11 @@ defect found there was reported upstream as issue #1 on 27 April 2026 and is
 still open. This repository covers only the claims added by the September 2026
 preprint.
 
+## Companion evaluations
+
+- [`octonion-mppt-eval`](https://github.com/karagos01/octonion-mppt-eval) — the octonion two-layer/associator template and the magnon claims
+- [`causal-trilogy-eval`](https://github.com/karagos01/causal-trilogy-eval) — the CQFT / PCTP / SOTP trilogy of September 2026
+
 ## Licence
 
 Code (all `*.py` and `run_all.sh`): MIT, see `LICENSE`.

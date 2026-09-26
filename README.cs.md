@@ -75,6 +75,11 @@ one-shot PTQ, tréninku od nuly s 2:4 až na 5 miliardách tokenů a měření r
 byla nahlášena jako issue #1 dne 27. dubna 2026 a je pořád otevřená. Tento
 repozitář pokrývá jen tvrzení, která přidal preprint ze září 2026.
 
+## Doprovodná vyhodnocení
+
+- [`octonion-mppt-eval`](https://github.com/karagos01/octonion-mppt-eval) — oktonionová dvouvrstvá šablona s asociátorem a magnonová tvrzení
+- [`causal-trilogy-eval`](https://github.com/karagos01/causal-trilogy-eval) — trilogie CQFT / PCTP / SOTP ze září 2026
+
 ## Licence
 
 Kód (všechny `*.py` a `run_all.sh`): MIT, viz `LICENSE`.
