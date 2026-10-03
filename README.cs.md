@@ -79,6 +79,7 @@ repozitář pokrývá jen tvrzení, která přidal preprint ze září 2026.
 
 - [`octonion-mppt-eval`](https://github.com/karagos01/octonion-mppt-eval) — oktonionová dvouvrstvá šablona s asociátorem a magnonová tvrzení
 - [`causal-trilogy-eval`](https://github.com/karagos01/causal-trilogy-eval) — trilogie CQFT / PCTP / SOTP ze září 2026
+- [`openql-eval`](https://github.com/karagos01/openql-eval) — tenzorová maticová architektura openQL / openOL z října 2026
 
 ## Licence
 
